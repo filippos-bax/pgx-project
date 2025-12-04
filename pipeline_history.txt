@@ -1,0 +1,59 @@
+prefetch data/sra/SRR19862964
+fasterq-dump data/sra/SRR19682964.sra --split-files --outdir data/fastq
+
+mv data/fastq/SRR19682964_1.fastq data/fastq/SAMPLE_CYP_1.fastq 
+mv data/fastq/SRR19682964_2.fastq data/fastq/SAMPLE_CYP_2.fastq 
+
+fastqc data/fastq/SAMPLE_CYP_1.fastq 
+fastqc data/fastq/SAMPLE_CYP_2.fastq 
+
+wget https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz
+gunzip hg38.fa.gz
+
+samtools faidx data/refgen/hg38.fa chr22 > data/refgen/hg38_chr22.fa
+bwa index data/refgen/hg38_chr22.fa 
+bwa mem -t 24 -R '@RG\tID:SRR19682964\tSM:SRR19682964\tPL:ILLUMINA\tLB:lib1\tPU:unit1' data/refgen/hg38_chr22.fa data/fastq/SAMPLE_CYP_1.fastq data/fastq/SAMPLE_CYP_2.fastq >results/SRR19682964.aln.sam
+
+samtools view -Sb results/sam/SRR19682964.aln.sam > results/bam/SRR19682964.aln.bam
+samtools sort -@ 24 results/bam/SRR19682964.aln.bam > results/bam/SRR19682964.aln.sorted.bam
+samtools index results/bam/SRR19682964.aln.sorted.bam 
+
+gatk HaplotypeCaller -R data/refgen/hg38_chr22.fa -I results/bam/SRR19682964.aln.sorted.bam -O results/vcf/SRR19682964.vcf --native-pair-hmm-threads 24
+
+gatk VariantFiltration \
+  -R data/refgen/hg38_chr22.fa \
+  -V results/vcf/SRR19682964.vcf \
+  -O results/vcf/SRR19682964.filtered.vcf \
+  --filter-name "QD_lt2"         --filter-expression "QD < 2.0" \
+  --filter-name "FS_gt60"        --filter-expression "FS > 60.0" \
+  --filter-name "SOR_gt3"        --filter-expression "SOR > 3.0" \
+  --filter-name "DP_lt10"        --filter-expression "DP < 10.0"
+
+bgzip results/vcf/SRR19682964.filtered.vcf
+tabix -p vcf results/vcf/SRR19682964.filtered.vcf.gz
+
+bcftools view \
+  -r chr22:42126499-42130975 \
+  results/vcf/SRR19682964.filtered.vcf.gz \
+  > results/vcf/SRR19682964.CYP2D6.all.vcf
+
+bgzip results/vcf/SRR19682964.CYP2D6.all.vcf
+tabix -p vcf results/vcf/SRR19682964.CYP2D6.all.vcf.gz
+
+vep \
+  --input_file results/vcf/SRR19682964.CYP2D6.all.vcf.gz \
+  --output_file results/vep/SRR19682964.CYP2D6.all.vep.vcf \
+  --vcf \
+  --cache \
+  --dir_cache ~/.vep \
+  --offline \
+  --species homo_sapiens \
+  --assembly GRCh38 \
+  --fork 12 \
+  --everything \
+  --allele_number \
+  --verbose
+
+./scripts/parse_vep_vcf.py results/vep/SRR19682964.CYP2D6.all.vep.vcf > results/final/SRR19682964.CYP2D6.parsed.tsv
+
+./scripts/plot_consequence.py results/final/SRR19682964.CYP2D6.parsed.tsv results/final/consequence_distribution.png
